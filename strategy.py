@@ -1,30 +1,29 @@
-"""Causal baseline, optional symbols. No requirement to manufacture market diversity.
-Slow 20-bar momentum, entries after 10:00 CT, flat at 14:00. Not claimed profitable.
-"""
+"""v17n-4 experiment 1: rates month-end duration-extension demand."""
 import numpy as np
+import pandas as pd
 
-FAMILY = "baseline-unvalidated"
-# Baseline deliberately fails risk gate until researcher models real entry risk.
-
-
-def entry_risk(panel):
-    return {symbol: np.full(len(df), 301.) for symbol, df in panel.items()}
+FAMILY = "rates-month-end-duration-extension"
+PARAMS = {"month_end_sessions": 3, "entry_ct_sec": 43200}
 
 
 def signals(panel):
+    """Long intermediate Treasury futures late in final 3 observed sessions/month."""
     result = {}
     for symbol, df in panel.items():
         out = np.zeros(len(df), dtype=np.int64)
-        # Two micros only, at most 0.2 standard equivalents total.
-        if symbol not in ('MES', 'MGC'):
+        if symbol not in ("ZN", "ZF"):
             result[symbol] = out
             continue
-        for indices in df.groupby('session', sort=False).indices.values():
-            close = df.close.to_numpy()[indices]
-            sec = df.ct_sec.to_numpy()[indices]
-            # Rolling mean excludes future rows; warmup restarts each session.
-            for j in range(20, len(indices)):
-                if 36000 <= sec[j] < 50400:
-                    out[indices[j]] = int(np.sign(close[j] - close[j-20:j].mean()))
+        sessions = pd.to_datetime(df["session"].astype(str).str[:10])
+        session_days = pd.Index(sessions.unique()).sort_values()
+        is_final = np.zeros(len(df), dtype=bool)
+        for _, days in pd.Series(session_days, index=session_days).groupby(session_days.to_period("M")):
+            last = set(days.iloc[-PARAMS["month_end_sessions"]:])
+            is_final |= sessions.isin(last).to_numpy()
+        out[is_final & (df.ct_sec.to_numpy() >= PARAMS["entry_ct_sec"])] = 1
         result[symbol] = out
     return result
+
+
+def entry_risk(panel):
+    return {symbol: np.full(len(df), 300.0) for symbol, df in panel.items()}
